@@ -13,11 +13,14 @@ DEPENDS = " \
     dbus \
     dbus-glib \
     dbus-glib-native \
+    udev \
+    wireless-tools \
+    ppp \
+    nss \
     libgudev \
     util-linux \
     libndp \
     libnewt \
-    polkit \
     jansson \
 "
 
@@ -32,7 +35,21 @@ SRC_URI = "${GNOME_MIRROR}/NetworkManager/${@gnome_verdir("${PV}")}/NetworkManag
            file://0004-Define-missing-features-to-cater-for-musl.patch \
            file://0005-sd-lldp.h-Remove-net-ethernet.h-seems-to-be-over-spe.patch \
            file://0001-check-for-strndupa-before-using-it.patch \
-           "
+           file://fix-compatibility-with-network-slave.patch \
+           file://debug.patch \
+           file://db-nm-settings.patch \
+           file://use-dom0-db-for-seen-bssids.patch \
+           file://only-request-secrets-on-initial-connect.patch \
+           file://always-assume-uid-for-external-processes.patch \
+           file://fix-device-type-property-exposure.patch \
+           file://xc-nutty-network.patch \
+           file://NetworkManager.conf \
+           file://nm_sync.sh \
+           file://db_to_nm.awk \
+           file://nm_to_db.awk \
+           file://com.openxt.conf \
+"
+
 SRC_URI[md5sum] = "63f1e0d6d7e9099499d062c84c927a75"
 SRC_URI[sha256sum] = "829378f318cc008d138a23ca6a9191928ce75344e7e47a2f2c35f4ac82133309"
 
@@ -46,10 +63,14 @@ EXTRA_OECONF = " \
     --with-iptables=${sbindir}/iptables \
     --with-tests \
     --with-nmtui=yes \
+    --with-wwan=no \
+    --enable-more-logging \
+    --disable-polkit \
+    --without-systemdsystemunitdir \
 "
 
 do_compile_prepend() {
-        export GIR_EXTRA_LIBS_PATH="${B}/libnm-util/.libs"
+        export GIR_EXTRA_LIBS_PATH="${B}/libnm-util/.libs:${B}/libnm-glib/.libs"
 }
 
 PACKAGECONFIG ??= "nss ifupdown netconfig dhclient dnsmasq \
@@ -78,6 +99,37 @@ PACKAGECONFIG[ifupdown] = "--enable-ifupdown,--disable-ifupdown"
 PACKAGECONFIG[netconfig] = "--with-netconfig=yes,--with-netconfig=no"
 PACKAGECONFIG[qt4-x11-free] = "--enable-qt,--disable-qt,qt4-x11-free"
 
+do_install_prepend () {
+        sed -i -e s:deny:allow:g ${S}/src/org.freedesktop.NetworkManager.conf
+        sed -i -e s:deny:allow:g ${S}/callouts/nm-dispatcher.conf
+} 
+
+do_install_append () {
+    install -m 0755 -d ${D}${sysconfdir}/dbus-1
+    install -m 0755 -d ${D}${sysconfdir}/dbus-1/event.d
+    #Additional test binaries
+    install -d ${D}${bindir}
+
+    install -m 0755 -d ${D}${sysconfdir}/NetworkManager
+    rm -f ${D}${sysconfdir}/init.d/NetworkManager
+    install -d ${D}${nmidldatadir}
+    install -m 0644 ${S}/introspection/*.xml ${D}${nmidldatadir}/
+    install -m 0644 ${WORKDIR}/NetworkManager.conf ${D}/etc/NetworkManager
+
+    # OpenXT additional scripts for NDVM.
+    install -m 0755 ${WORKDIR}/nm_sync.sh ${D}${bindir}/nm_sync.sh
+    install -m 0755 -d ${D}${datadir}/xenclient/nm_scripts
+    install -m 0755 ${WORKDIR}/db_to_nm.awk ${D}${datadir}/xenclient/nm_scripts/db_to_nm.awk
+    install -m 0755 ${WORKDIR}/nm_to_db.awk ${D}${datadir}/xenclient/nm_scripts/nm_to_db.awk
+    install -m 0644 ${D}${sysconfdir}/NetworkManager/NetworkManager.conf ${D}${datadir}/xenclient/nm_scripts/
+
+    # Install dbus conf file for allowing nm-applet to own a bus name
+    install -m 0755 ${WORKDIR}/com.openxt.conf ${D}${sysconfdir}/dbus-1/system.d/com.openxt.conf
+
+    # oe default
+    rm -rf ${D}/run ${D}${localstatedir}/run
+}
+
 PACKAGES =+ "libnmutil libnmglib libnmglib-vpn \
   ${PN}-nmtui ${PN}-nmtui-doc \
   ${PN}-adsl \
@@ -97,19 +149,42 @@ FILES_${PN} += " \
     ${datadir}/dbus-1 \
     ${base_libdir}/udev/* \
     ${systemd_unitdir}/system \
+    ${nmidldatadir} \
 "
+FILES_${PN} += " \
+    ${datadir}/xenclient/nm_scripts/db_to_nm.awk \
+    ${datadir}/xenclient/nm_scripts/nm_to_db.awk \
+    ${datadir}/xenclient/nm_scripts/NetworkManager.conf \
+    ${bindir}/nm_sync.sh \
+"
+
 
 RRECOMMENDS_${PN} += "iptables \
     ${@bb.utils.filter('PACKAGECONFIG', 'dnsmasq', d)} \
 "
+
 RCONFLICTS_${PN} = "connman"
+
+RDEPENDS_${PN} = " \
+    wpa-supplicant \
+    dhcp-client \
+    ${@bb.utils.contains('COMBINED_FEATURES', '3gmodem', 'ppp', '', d)} \
+    libgudev \
+    wireless-tools \
+    dnsmasq \
+    iproute2 \
+    networkmanager-certs \
+"
 
 FILES_${PN}-dev += " \
     ${datadir}/NetworkManager/gdb-cmd \
     ${libdir}/pppd/*/*.la \
     ${libdir}/NetworkManager/*.la \
 "
-
+FILES_${PN}-dbg += " \
+    ${libdir}/NetworkManager/.debug/ \
+    ${libdir}/pppd/*/.debug/ \
+"
 FILES_${PN}-nmtui = " \
     ${bindir}/nmtui \
     ${bindir}/nmtui-edit \
@@ -121,8 +196,6 @@ FILES_${PN}-nmtui-doc = " \
     ${mandir}/man1/nmtui* \
 "
 
-SYSTEMD_SERVICE_${PN} = "NetworkManager.service NetworkManager-dispatcher.service"
-
-do_install_append() {
-    rm -rf ${D}/run ${D}${localstatedir}/run
-}
+#SYSTEMD_SERVICE_${PN} = "NetworkManager.service NetworkManager-dispatcher.service"
+SYSTEMD_PACKAGES = "${PN}"
+SYSTEMD_SERVICE = ""

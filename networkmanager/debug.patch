@@ -50,7 +50,22 @@
  			_device_realize_finish (self, device, plink);
  		} else {
  			_LOGW (LOGD_DEVICE, "%s: failed to realize device: %s",
-@@ -5472,14 +5476,19 @@ nm_manager_setup (void)
+@@ -2269,9 +2273,13 @@ rfkill_manager_rfkill_changed_cb (NMRfki
+ const GSList *
+ nm_manager_get_devices (NMManager *manager)
+ {
++	NMManager *self = manager;
++	NMManagerPrivate *priv = NM_MANAGER_GET_PRIVATE (self);
++	_LOGI (LOGD_CORE, "NMDEBUSS: checking manager ");
+ 	g_return_val_if_fail (NM_IS_MANAGER (manager), NULL);
++	_LOGI (LOGD_CORE, "NMDEBUSS: returning device list of length %d", g_slist_length(priv->devices));
+ 
+-	return NM_MANAGER_GET_PRIVATE (manager)->devices;
++	return priv->devices;
+ }
+ 
+ static NMDevice *
+@@ -5472,14 +5480,19 @@ nm_manager_setup (void)
  
  	g_return_val_if_fail (!singleton_instance, singleton_instance);
  

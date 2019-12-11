@@ -64,13 +64,13 @@
  
  	/* signal that resolv.conf was changed */
  	if (update && result == SR_SUCCESS)
-@@ -1286,6 +1291,88 @@ forget_data (NMDnsManager *self, NMDnsIP
+@@ -1286,6 +1291,104 @@ forget_data (NMDnsManager *self, NMDnsIP
  }
  
  static gboolean
 +xc_rewrite_resolv_conf (NMDnsManager *self,
 +            const char *iface,
-+            NMIP4Config *config,
++            gpointer config,
 +            gboolean no_caching,
 +            GError **error)
 +{
@@ -86,43 +86,55 @@
 +       gboolean success = FALSE, caching = FALSE;
 +       char resolv_path[PATH_MAX];
 +
++	_LOGI (" calling initializing rc...");
 +
 +       rc.nameservers = g_ptr_array_new ();
 +       rc.searches = g_ptr_array_new ();
++       rc.options = g_ptr_array_new ();
 +       rc.nis_domain = NULL;
 +       rc.nis_servers = g_ptr_array_new ();
 +
-+       if (config)
-+               merge_one_ip4_config (&rc, config);
++	_LOGI (" merge config ...");
++	if (config){
++		if (NM_IS_IP4_CONFIG (config))
++			merge_one_ip4_config (&rc, (NMIP4Config *) config);
++		else
++			_LOGI (" config is not ip4...");
++	}
 +
 +       /* Per 'man resolv.conf', the search list is limited to 6 domains
 +        * totalling 256 characters.
 +       */
++	_LOGI (" do some checks ...");
 +       num = MIN (rc.searches->len, 6);
 +       for (i = 0, len = 0; i < num; i++) {
 +              len += strlen (rc.searches->pdata[i]) + 1; /* +1 for spaces */
 +              if (len > 256)
 +                      break;
 +       }
++	_LOGI ("  add more searches...");
 +       g_ptr_array_set_size (rc.searches, i);
 +       if (rc.searches->len) {
-+              g_ptr_array_add (rc.searches, NULL);
++               g_ptr_array_add (rc.searches, NULL);
 +               searches = (char **) g_ptr_array_free (rc.searches, FALSE);
 +       } else
 +              g_ptr_array_free (rc.searches, TRUE);
 +
++	_LOGI ("  add nameservers...");
 +       if (rc.nameservers->len) {
 +               g_ptr_array_add (rc.nameservers, NULL);
 +               nameservers = (char **) g_ptr_array_free (rc.nameservers, FALSE);
 +       } else
 +               g_ptr_array_free (rc.nameservers, TRUE);
 +
++	_LOGI ("  add nisservers...");
 +       if (rc.nis_servers->len) {
 +               g_ptr_array_add (rc.nis_servers, NULL);
 +               nis_servers = (char **) g_ptr_array_free (rc.nis_servers, FALSE);
 +       } else
 +               g_ptr_array_free (rc.nis_servers, TRUE);
 +
++	_LOGI ("  add options...");
 +	if (rc.options->len) {
 +		g_ptr_array_add (rc.options, NULL);
 +		options = (char **) g_ptr_array_free (rc.options, FALSE);
@@ -131,14 +143,17 @@
 +
 +       nis_domain = rc.nis_domain;
 +
++	_LOGI (" construct the resolv path ...");
 +       strcpy(resolv_path, RESOLV_CONF);
 +       strcat(resolv_path, ".");
 +       strcat(resolv_path, iface);
 +
 +
++	_LOGI (" update resolv conf ...");
 +       if (success == FALSE)
 +               success = update_resolv_conf (self, resolv_path, searches, nameservers, options, error, NM_DNS_MANAGER_RESOLV_CONF_MAN_FILE);
 +
++	_LOGI (" free stuff ...");
 +       if (searches)
 +               g_strfreev (searches);
 +       if (nameservers)
@@ -146,6 +161,7 @@
 +       if (nis_servers)
 +               g_strfreev (nis_servers);
 +
++	_LOGI (" return success ...");
 +       return success;
 +}
 +
@@ -153,10 +169,48 @@
  nm_dns_manager_add_ip_config (NMDnsManager *self,
                                const char *iface,
                                gpointer config,
-@@ -1344,9 +1431,17 @@ nm_dns_manager_add_ip_config (NMDnsManag
+@@ -1297,12 +1400,14 @@ nm_dns_manager_add_ip_config (NMDnsManag
+ 	gboolean v4 = NM_IS_IP4_CONFIG (config);
+ 	guint i;
+ 
++	_LOGI (" add_ip_config...");
+ 	g_return_val_if_fail (NM_IS_DNS_MANAGER (self), FALSE);
+ 	g_return_val_if_fail (config, FALSE);
+ 	g_return_val_if_fail (iface && iface[0], FALSE);
+ 
+ 	priv = NM_DNS_MANAGER_GET_PRIVATE (self);
+ 
++	_LOGI (" check for redundant config...");
+ 	for (i = 0; i < priv->configs->len; i++) {
+ 		data = priv->configs->pdata[i];
+ 		if (data->config == config) {
+@@ -1317,6 +1422,7 @@ nm_dns_manager_add_ip_config (NMDnsManag
+ 		}
+ 	}
+ 
++	_LOGI (" initialize new config data...");
+ 	data = ip_config_data_new (config, cfg_type, iface);
+ 	g_ptr_array_add (priv->configs, data);
+ 	g_signal_connect (config,
+@@ -1325,6 +1431,7 @@ nm_dns_manager_add_ip_config (NMDnsManag
+ 	                    "notify::" NM_IP6_CONFIG_DNS_PRIORITY,
+ 	                  (GCallback) ip_config_dns_priority_changed, self);
+ 	priv->need_sort = TRUE;
++	_LOGI (" check if cfg_type is best device...");
+ 
+ 	if (cfg_type == NM_DNS_IP_CONFIG_TYPE_BEST_DEVICE) {
+ 		/* Only one best-device per IP version is allowed */
+@@ -1339,14 +1446,25 @@ nm_dns_manager_add_ip_config (NMDnsManag
+ 		}
+ 	}
+ 
++	_LOGI (" update dns...");
+ 	if (!priv->updates_queue && !update_dns (self, FALSE, &error)) {
+ 		_LOGW ("could not commit DNS changes: %s", error->message);
  		g_clear_error (&error);
  	}
  
++	_LOGI (" calling xc_rewrite_resolv_conf...");
 +        if (!xc_rewrite_resolv_conf (self, iface, config, FALSE, &error)) {
 +                 _LOGW ("Could not commit DNS changes: (%d) %s",
 +                             error ? error->code : -1,
@@ -164,6 +218,7 @@
 +                g_clear_error (&error);
 +        }
 +
++	_LOGI (" return from add_ip_config...");
  	return TRUE;
  }
  
@@ -171,3 +226,80 @@
  gboolean
  nm_dns_manager_add_ip4_config (NMDnsManager *self,
                                 const char *iface,
+--- a/src/nm-policy.c
++++ b/src/nm-policy.c
+@@ -607,6 +607,7 @@ update_routing_and_dns (NMPolicy *self,
+ 	NMPolicyPrivate *priv = NM_POLICY_GET_PRIVATE (self);
+ 
+ 	nm_dns_manager_begin_updates (priv->dns_manager, __func__);
++	_LOGI (LOGD_DNS, "update_ip4_dns");
+ 
+ 	update_ip4_dns (self, priv->dns_manager);
+ 	update_ip6_dns (self, priv->dns_manager);
+@@ -1210,6 +1211,7 @@ device_state_changed (NMDevice *device,
+ 		/* Add device's new IPv4 and IPv6 configs to DNS */
+ 
+ 		nm_dns_manager_begin_updates (priv->dns_manager, __func__);
++		_LOGI (LOGD_DNS, "nm_device_get_ip4_config");
+ 
+ 		ip4_config = nm_device_get_ip4_config (device);
+ 		if (ip4_config)
+@@ -1301,26 +1303,34 @@ device_ip4_config_changed (NMDevice *dev
+ 	const char *ip_iface = nm_device_get_ip_iface (device);
+ 
+ 	nm_dns_manager_begin_updates (priv->dns_manager, __func__);
++	_LOGI (LOGD_DNS, "device_ip4_config_changed");
+ 
+ 	/* Ignore IP config changes while the device is activating, because we'll
+ 	 * catch all the changes when the device moves to ACTIVATED state.
+ 	 * Prevents unecessary changes to DNS information.
+ 	 */
+ 	if (!nm_device_is_activating (device)) {
++		_LOGI (LOGD_DNS, "check old config ");
+ 		if (old_config != new_config) {
+ 			if (old_config)
+ 				nm_dns_manager_remove_ip4_config (priv->dns_manager, old_config);
++			_LOGI (LOGD_DNS, "removed old config");
+ 			if (new_config)
+ 				nm_dns_manager_add_ip4_config (priv->dns_manager, ip_iface, new_config, NM_DNS_IP_CONFIG_TYPE_DEFAULT);
++			_LOGI (LOGD_DNS, "adding new config");
+ 		}
++		_LOGI (LOGD_DNS, "updating ip4 dns..");
+ 		update_ip4_dns (self, priv->dns_manager);
++		_LOGI (LOGD_DNS, "updating ip4 routing..");
+ 		update_ip4_routing (self, TRUE);
++		_LOGI (LOGD_DNS, "updating system hostname..");
+ 		update_system_hostname (self, priv->default_device4, priv->default_device6);
+ 	} else {
+ 		/* Old configs get removed immediately */
+ 		if (old_config)
+ 			nm_dns_manager_remove_ip4_config (priv->dns_manager, old_config);
+ 	}
++	_LOGI (LOGD_DNS, "Done with updates.. ");
+ 
+ 	nm_dns_manager_end_updates (priv->dns_manager, __func__);
+ }
+@@ -1336,6 +1346,7 @@ device_ip6_config_changed (NMDevice *dev
+ 	const char *ip_iface = nm_device_get_ip_iface (device);
+ 
+ 	nm_dns_manager_begin_updates (priv->dns_manager, __func__);
++	_LOGI (LOGD_DNS, "device_ip6_config_changed");
+ 
+ 	/* Ignore IP config changes while the device is activating, because we'll
+ 	 * catch all the changes when the device moves to ACTIVATED state.
+@@ -1446,6 +1457,7 @@ vpn_connection_activated (NMPolicy *self
+ 	const char *ip_iface;
+ 
+ 	nm_dns_manager_begin_updates (priv->dns_manager, __func__);
++	_LOGI (LOGD_DNS, "vpn_connection_activated");
+ 
+ 	ip_iface = nm_vpn_connection_get_ip_iface (vpn, TRUE);
+ 
+@@ -1472,6 +1484,7 @@ vpn_connection_deactivated (NMPolicy *se
+ 	NMIP6Config *ip6_config;
+ 
+ 	nm_dns_manager_begin_updates (priv->dns_manager, __func__);
++	_LOGI (LOGD_DNS, "vpn_connection_deactivated");
+ 
+ 	ip4_config = nm_vpn_connection_get_ip4_config (vpn);
+ 	if (ip4_config) {

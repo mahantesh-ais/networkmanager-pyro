@@ -47,7 +47,8 @@ SRC_URI = "${GNOME_MIRROR}/NetworkManager/${@gnome_verdir("${PV}")}/NetworkManag
            file://nm_sync.sh \
            file://db_to_nm.awk \
            file://nm_to_db.awk \
-           file://com.openxt.conf \
+           file://com.nmapplet.conf \
+           file://dbus-system.conf \
 "
 
 SRC_URI[md5sum] = "63f1e0d6d7e9099499d062c84c927a75"
@@ -114,6 +115,7 @@ do_install_append () {
     rm -f ${D}${sysconfdir}/init.d/NetworkManager
     install -d ${D}${nmidldatadir}
     install -m 0644 ${S}/introspection/*.xml ${D}${nmidldatadir}/
+    install -m 0644 ${S}/openxt/*.xml ${D}${nmidldatadir}/
     install -m 0644 ${WORKDIR}/NetworkManager.conf ${D}/etc/NetworkManager
 
     # OpenXT additional scripts for NDVM.
@@ -124,7 +126,10 @@ do_install_append () {
     install -m 0644 ${D}${sysconfdir}/NetworkManager/NetworkManager.conf ${D}${datadir}/xenclient/nm_scripts/
 
     # Install dbus conf file for allowing nm-applet to own a bus name
-    install -m 0755 ${WORKDIR}/com.openxt.conf ${D}${sysconfdir}/dbus-1/system.d/com.openxt.conf
+    install -m 0755 ${WORKDIR}/com.nmapplet.conf ${D}${sysconfdir}/dbus-1/system.d/com.nmapplet.conf
+
+    # Install system-local.conf file to allow nm-applet to connect to system dbus.
+    install -m 0644 ${WORKDIR}/dbus-system.conf ${D}${sysconfdir}/dbus-1/system-local.conf
 
     # oe default
     rm -rf ${D}/run ${D}${localstatedir}/run
